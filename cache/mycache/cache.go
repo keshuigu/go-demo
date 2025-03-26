@@ -1,7 +1,7 @@
 package mycache
 
 import (
-	"keshuigu/mycache/lru"
+	"cache/mycache/lru"
 	"sync"
 )
 

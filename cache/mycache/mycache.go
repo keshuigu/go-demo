@@ -63,7 +63,7 @@ func (g *Group) Get(key string) (ByteView, error) {
 		return ByteView{}, errors.New("key error")
 	}
 	if b, ok := g.mainCache.get(key); ok {
-		log.Printf("[Cache hit]: key %s", key)
+		log.Printf("[Cache hit]: key %s\n", key)
 		return b, nil
 	}
 	return g.load(key)

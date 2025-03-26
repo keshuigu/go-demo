@@ -1,7 +1,7 @@
 package lru_test
 
 import (
-	"keshuigu/mycache/lru"
+	"cache/mycache/lru"
 	"math"
 	"reflect"
 	"testing"
