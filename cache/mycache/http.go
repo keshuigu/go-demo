@@ -1,17 +1,27 @@
 package mycache
 
 import (
+	"cache/mycache/consistenthash"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
 )
 
-const defaultBasePath = "/mycache/"
+const (
+	defaultBasePath = "/mycache/"
+	defaultReplicas = 50
+)
 
 type HTTPPool struct {
-	self     string // 本机地址
-	basePath string // 通讯地址前缀
+	self        string // 本机地址
+	basePath    string // 通讯地址前缀
+	mu          sync.Mutex
+	peers       *consistenthash.Map
+	httpGetters map[string]*httpGetter // 映射远程节点和对应Getter
 }
 
 func NewHTTPPool(self string) *HTTPPool {
@@ -54,3 +64,59 @@ func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Write(view.ByteSlice())
 }
+
+func (p *HTTPPool) Set(peers ...string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.peers = consistenthash.New(defaultReplicas, nil)
+	p.peers.Add(peers...)
+	p.httpGetters = make(map[string]*httpGetter)
+	for _, peer := range peers {
+		p.httpGetters[peer] = &httpGetter{
+			baseURL: peer + p.basePath, // http://localhost:800x + /mycache/
+		}
+	}
+}
+
+// server 实现 PeerPicker
+
+func (p *HTTPPool) PickPeer(key string) (peer PeerGetter, ok bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if peer := p.peers.Get(key); peer != "" && peer != p.self {
+		p.Log("Pick peer %s", peer)
+		return p.httpGetters[peer], true
+	}
+	return nil, false
+}
+
+// Go 语言中用于‌编译期接口实现检查‌的惯用写法
+var _ PeerPicker = (*HTTPPool)(nil) // 验证是否实现PeerPicker
+// Client
+type httpGetter struct {
+	baseURL string // 以/结尾
+}
+
+func (h *httpGetter) Get(group string, key string) ([]byte, error) {
+	u := fmt.Sprintf("%v%v/%v",
+		h.baseURL,
+		url.QueryEscape(group),
+		url.QueryEscape(key))
+	res, err := http.Get(u)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("server returned: %v", res.Status)
+	}
+
+	bytes, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response body: %v", err)
+	}
+	return bytes, nil
+}
+
+var _ PeerGetter = (*httpGetter)(nil) // 验证是否实现PeerGetter
